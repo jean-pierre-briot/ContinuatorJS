@@ -9,7 +9,7 @@ Jean-Pierre Briot
 This is a reimplementation and adaptation in JavaScript of my reimplementation in Python of the Continuator from Francois Pachet.
 His original implementation (in 2002, in Java) had unfortunately been lost.
 
-This implementation is operational but still minimal and still evolving.
+This implementation is operational but still minimal and still currently evolving.
 
 It is available (and runnable) online (Web) via https://perso.lip6.fr/Jean-Pierre.Briot/infomusic/continuator.html
 
