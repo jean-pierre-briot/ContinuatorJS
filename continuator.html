@@ -155,6 +155,7 @@ const defaultGeneratedNoteDuration = 1000;
 const defaultGeneratedNoteVelocity = maxMidiVelocity;
 let keyTranspositionSemiTones = 6;
 let firstContinuationDefaultRandomGenerationMode = true;
+let freezeTraining = false;
 const generalDefaultRandomGenerationMode = true;
 // const generationDurationMode = 'Learnt';
 const generationDurationMode = 'Played';
@@ -212,7 +213,7 @@ document.getElementById("reset")
         console.log("Model reset.");
     });
 
-let freezeTraining = document.getElementById("freezeTrainingCheckbox").checked;
+freezeTraining = document.getElementById("freezeTrainingCheckbox").checked;
 
 firstContinuationDefaultRandomGenerationMode = document.getElementById("defaultRandomContinuationFirstNoteCheckbox").checked;
 
@@ -307,8 +308,11 @@ function generateSequence() {
     // for (let note of playedNotes) {
     //     console.log("generateSequence: playedNotes: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
     // }
-    document.getElementById("status").innerText = "Training";
-    continuator.train(playedNotes);
+    freezeTraining = document.getElementById("freezeTrainingCheckbox").checked;
+    if (freezeTraining) {
+        document.getElementById("status").innerText = "Training";
+        continuator.train(playedNotes);
+    }
     currentState = State.PLAYING;
     currentState = State.GENERATING;
     document.getElementById("status").innerText = "Generating";
