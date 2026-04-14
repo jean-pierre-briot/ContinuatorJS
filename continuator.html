@@ -8,7 +8,7 @@
 
 <div id="continuatorUI">
 
-    <h2>Continuator</h2>
+    <h2>Continuator JS</h2>
 
     <div class="row">
         <button id="start">Start</button>
@@ -17,14 +17,28 @@
     </div>
 
     <div class="row">
-        <label>Max notes:
+        <label>Max continuation length (notes):
             <input type="range" id="maxLengthSlider" min="1" max="64" value="20">
             <span id="maxLengthValue">20</span>
         </label>
     </div>
 
     <div class="row">
-        <label>Silence threshold (ms):
+        <label>
+            <input type="checkbox" id="defaultRandomContinuationFirstNoteCheckbox">
+            Default random continuation fist note
+        </label>
+    </div>
+
+    <div class="row">
+        <label>Transposition (semitones):
+            <input type="range" id="transposeSlider" min="0" max="18" step="2" value="6">
+            <span id="transposeValue">6</span>
+        </label>
+    </div>
+
+    <div class="row">
+        <label>Player stop continuator start threshold (ms):
             <input type="range" id="silenceSlider" min="200" max="5000" step="100" value="1500">
             <span id="silenceValue">1500</span>
         </label>
@@ -44,7 +58,7 @@
 <style>
     #continuatorUI {
         font-family: sans-serif;
-        width: 280px;
+        width: 350px;
         padding: 12px;
         border-radius: 8px;
         background: #111;
@@ -139,8 +153,8 @@ const maxPlayedNotesConsidered = 20;
 const pseudoMaxOrder = 15;
 const defaultGeneratedNoteDuration = 1000;
 const defaultGeneratedNoteVelocity = maxMidiVelocity;
-const keyTranspositionSemiTones = 6;
-const firstContinuationDefaultRandomGenerationMode = true;
+let keyTranspositionSemiTones = 6;
+let firstContinuationDefaultRandomGenerationMode = true;
 const generalDefaultRandomGenerationMode = true;
 // const generationDurationMode = 'Learnt';
 const generationDurationMode = 'Played';
@@ -150,12 +164,20 @@ const defaultFixedDuration = 1000;
 
 // Web and MIDI Interaction
 
-const maxSlider = document.getElementById("maxLengthSlider");
-const maxValue = document.getElementById("maxLengthValue");
+const maxLengthSlider = document.getElementById("maxLengthSlider");
+const maxLengthValue = document.getElementById("maxLengthValue");
 
-maxSlider.oninput = () => {
-    maxContinuationLength = parseInt(maxSlider.value);
-    maxValue.innerText = maxContinuationLength;
+maxLengthSlider.oninput = () => {
+    maxContinuationLength = parseInt(maxLengthSlider.value);
+    maxLengthValue.innerText = maxContinuationLength;
+};
+
+const transposeSlider = document.getElementById("transposeSlider");
+const transposeValue = document.getElementById("transposeValue");
+
+transposeSlider.oninput = () => {
+    keyTranspositionSemiTones = parseInt(transposeSlider.value);
+    transposeValue.innerText = keyTranspositionSemiTones;
 };
 
 const silenceSlider = document.getElementById("silenceSlider");
@@ -189,6 +211,10 @@ document.getElementById("reset")
         continuator = new PrefixTreeContinuator();
         console.log("Model reset.");
     });
+
+let freezeTraining = document.getElementById("freezeTrainingCheckbox").checked;
+
+firstContinuationDefaultRandomGenerationMode = document.getElementById("defaultRandomContinuationFirstNoteCheckbox").checked;
 
 function onMIDIMessage(event) {
     const [status, pitch, velocity] = event.data;
@@ -273,6 +299,7 @@ function resetContinuator() {
 
 function generateSequence() {
 //    isGenerating = true;
+    firstContinuationDefaultRandomGenerationMode = document.getElementById("defaultRandomContinuationFirstNoteCheckbox").checked;
     if (currentState === State.PLAYING) return;
     currentState = State.ANALYZING;
     document.getElementById("status").innerText = "Analyzing";
