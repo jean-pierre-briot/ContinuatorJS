@@ -11,6 +11,24 @@
     <h2>Continuator JS</h2>
 
     <div class="row">
+        <button id="setup">Setup</button>
+    </div>
+
+    <div class="container">
+        <label for="selectInputMenu">Select MIDI Input :</label>
+        <select id="selectInputMenu"></select>
+
+        <div id="selectInputResult">No selection yet</div>
+    </div>
+
+    <div class="container">
+        <label for="selectOutputMenu">Select MIDI Input :</label>
+        <select id="selectOutputMenu"></select>
+
+        <div id="selectOutputResult">No selection yet</div>
+    </div>
+
+    <div class="row">
         <button id="start">Start</button>
         <button id="stop">Stop</button>
         <button id="reset">Reset</button>
@@ -70,6 +88,59 @@
         text-align: center;
     }
 
+    button {
+        margin-right: 5px;
+        padding: 5px 8px;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+    }
+
+    .container {
+        width: 300px;
+        padding: 15px;
+        background: #1a1a1a;
+        border-radius: 8px;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 4px;
+    }
+
+    selectInputMenu {
+        width: 100%;
+        padding: 2px;
+        border-radius: 2px;
+        border: none;
+        background: #222;
+        color: #eee;
+    }
+
+    selectOutputMenu {
+        width: 100%;
+        padding: 2px;
+        border-radius: 2px;
+        border: none;
+        background: #222;
+        color: #eee;
+    }
+
+    #selectInputResult {
+        margin-top: 4px;
+        padding: 2px;
+        background: #222;
+        border-radius: 4px;
+        text-align: center;
+    }
+
+    #selectOutputResult {
+        margin-top: 4px;
+        padding: 2px;
+        background: #222;
+        border-radius: 4px;
+        text-align: center;
+    }
     .row {
         margin-bottom: 10px;
     }
@@ -98,6 +169,7 @@
         text-align: center;
         font-size: 0.9em;
     }
+
 </style>
 
 <script>
@@ -121,6 +193,10 @@
 // MIDI System Parameters
 let input = null;
 let output = null;
+let inputList = null;
+let inputNameList = null;
+let outputList = null;
+let outputNameList = null;
 let recordedEvents = [];
 let activeNotes = new Map();
 let silenceTimer = null;
@@ -165,6 +241,69 @@ const defaultFixedDuration = 1000;
 
 // Web and MIDI Interaction
 
+const selectInputMenuV = document.getElementById("selectInputMenu");
+const selectOutputMenuV = document.getElementById("selectOutputMenu");
+
+function fillMidiIOMenu(menu, optionList) {
+    menu.innerHTML = "";
+    const def = document.createElement("option");
+    def.textContent = "Select among";
+    def.disabled = true;
+    def.selected = true;
+    menu.appendChild(def);
+    optionList.forEach(item => {
+        const option = document.createElement("option");
+        option.value = item;
+        option.textContent = item;
+        menu.appendChild(option);
+    });
+}
+
+function fillMidiIOMenus(inputOptionsList, outputOptionsList) {
+    fillMidiIOMenu(selectInputMenuV, inputOptionsList);
+    fillMidiIOMenu(selectOutputMenuV, outputOptionsList);
+}
+
+selectInputMenuV.addEventListener("change", () => {
+    document.getElementById("selectInputResult").textContent =
+        // "MIDI Input Selection: " +
+        selectInputMenuV.value;
+    console.log("MIDI Input Selection: " + selectInputMenuV.value);        // .value
+    input = inputList[inputNameList.indexOf(selectInputMenuV.value)]
+});
+
+selectOutputMenuV.addEventListener("change", () => {
+    document.getElementById("selectOutputResult").textContent =
+        // "MIDI Output Selection: " +
+        selectOutputMenuV.value;
+    console.log("MIDI Output Selection: " + selectOutputMenuV.value);
+    output = outputList[outputNameList.indexOf(selectOutputMenuV.value)]
+});
+
+document.getElementById("setup").onclick = async () => {
+    const access = await navigator.requestMIDIAccess();
+    inputList = [...access.inputs.values()];
+    inputNameList = inputList.map((x) => x.name);
+    outputList = [...access.outputs.values()];
+    outputNameList = outputList.map((x) => x.name);
+    fillMidiIOMenus(inputNameList, outputNameList);
+    console.log("Inputs: " + inputNameList + " and Outputs: " + outputNameList);
+    continuator = new PrefixTreeContinuator();
+//    if (!input || !output) {
+//        alert("No MIDI input or output found.");
+//        return;
+//    }
+    currentState = State.IDLE;
+    document.getElementById("status").innerText = "Idle";
+};
+
+document.getElementById("start").onclick = async () => {
+    continuatorDisabled = true;
+    currentState = State.LISTENING;
+    input.onmidimessage = onMIDIMessage;
+    document.getElementById("status").innerText = "Listening";
+};
+
 const maxLengthSlider = document.getElementById("maxLengthSlider");
 const maxLengthValue = document.getElementById("maxLengthValue");
 
@@ -189,21 +328,6 @@ silenceSlider.oninput = () => {
     silenceValue.innerText = playerSilenceContinuatorStartThreshold;
 };
 
-document.getElementById("start").onclick = async () => {
-    const access = await navigator.requestMIDIAccess();
-    input = [...access.inputs.values()][0];
-    output = [...access.outputs.values()][0];
-    continuator = new PrefixTreeContinuator();
-    if (!input || !output) {
-        alert("No MIDI input or output found.");
-        return;
-    }
-    currentState = State.IDLE;
-    input.onmidimessage = onMIDIMessage;
-    document.getElementById("status").innerText =
-        "Listening on: " + input.name;
-};
-
 document.getElementById("stop")
     .addEventListener("click", stopContinuator);
 
@@ -211,6 +335,8 @@ document.getElementById("reset")
     .addEventListener("click", () => {
         continuator = new PrefixTreeContinuator();
         console.log("Model reset.");
+        currentState = State.IDLE;
+        document.getElementById("status").innerText = "Idle";
     });
 
 freezeTraining = document.getElementById("freezeTrainingCheckbox").checked;
@@ -222,7 +348,16 @@ function onMIDIMessage(event) {
     const command = status & 0xf0;
     const channel = status & 0x0f;
     if (currentState === State.STOPPED) return;
+    // output.clear();
+    // clearAllScheduledNotes();
+    // stopAllScheduledNotes();
+    // Force note-off pour toutes les notes encore actives
+    // activeGeneratedNotes.forEach(pitch => {
+    //     output.send([0x80, pitch, 0]);
+    // });
+    // activeGeneratedNotes.clear();
     currentState = State.LISTENING;
+    document.getElementById("status").innerText = "Listening";
     const now = event.timeStamp
     if (!recordingStartTime) {
         recordingStartTime = now;
@@ -269,21 +404,22 @@ function resetSilenceTimer() {
 function stopContinuator() {
     console.log("Manual stop requested.");
     continuatorDisabled = true;
-    clearAllScheduledNotes();
-    document.getElementById("status").innerText = "Stopped";
-    // Annule tous les timeouts
-    scheduledTimeouts.forEach(t => clearTimeout(t));
-    scheduledTimeouts = [];
-    if (generationTimer) {
-        clearTimeout(generationTimer);
-        generationTimer = null;
-    }
-    // Force note-off pour toutes les notes encore actives
-    activeGeneratedNotes.forEach(pitch => {
-        output.send([0x80, pitch, 0]);
-    });
-    activeGeneratedNotes.clear();
+    stopAllScheduledNotes();
+    // clearAllScheduledNotes();
+    // // Annule tous les timeouts
+    // scheduledTimeouts.forEach(t => clearTimeout(t));
+    // scheduledTimeouts = [];
+    // if (generationTimer) {
+    //     clearTimeout(generationTimer);
+    //     generationTimer = null;
+    // }
+    // // Force note-off pour toutes les notes encore actives
+    // activeGeneratedNotes.forEach(pitch => {
+    //     output.send([0x80, pitch, 0]);
+    // });
+    // activeGeneratedNotes.clear();
     currentState = State.STOPPED;
+    document.getElementById("status").innerText = "Stopped";
 }
 
 function clearAllScheduledNotes() {
@@ -294,6 +430,7 @@ function clearAllScheduledNotes() {
 }
 
 function resetContinuator() {
+    continuator = new PrefixTreeContinuator();
     continuatorDisabled = false;
     currentState = State.IDLE;
 }
@@ -309,29 +446,41 @@ function generateSequence() {
     //     console.log("generateSequence: playedNotes: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
     // }
     freezeTraining = document.getElementById("freezeTrainingCheckbox").checked;
-    if (freezeTraining) {
+    if (!freezeTraining) {
         document.getElementById("status").innerText = "Training";
+        currentState = State.TRAINING;
         continuator.train(playedNotes);
     }
-    currentState = State.PLAYING;
     currentState = State.GENERATING;
     document.getElementById("status").innerText = "Generating";
     const continuationSequence = continuator.generateContinuationNoteSequence(playedNotes);
+    if (continuationSequence.length === 0) {
+        document.getElementById("status").innerText = "No continuation sequence found";
+        return null;
+    }
+    // console.log("generateSequence.length: " + continuationSequence.length.toString());
+    // console.log("generateSequence: " + continuationSequence.toString());
     // for (let note of continuationSequence) {
-    //     console.log("generateSequence: continuationSequence: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
-    // }
-    currentState = State.GENERATING;
+    //    console.log("generateSequence: note = undefined: " + (note === undefined));
+    //    console.log("generateSequence: note: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
+    //}
+    currentState = State.PLAYING;
     document.getElementById("status").innerText = "Playing";
     let baseTime = performance.now();
+    // let sequenceStartTime = performance.now();
     let accumulatedTime = 0;
+   // let t0 = continuationSequence[0].time;
     for (let note of continuationSequence) {
-        // console.log("generateSequence: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
+        //     console.log("generateSequence: note: " + note.toString());
+        //     console.log("generateSequence: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
         accumulatedTime += note.delta;
         const startTime = baseTime + accumulatedTime;
+        // let startTime = sequenceStartTime + (note.time - t0) + accumulatedTime;
+        // console.log("generateSequence: note.toString(): " + note.toString())
         playMidiNote(output, note.pitch, note.velocity, startTime, note.duration);
     }
-    currentState = State.IDLE;
-    document.getElementById("status").innerText = "Idle";
+    currentState = State.LISTENING;
+    document.getElementById("status").innerText = "Listening";
 //    isGenerating = false;
 }
 
@@ -340,11 +489,26 @@ function playMidiNote(output, pitch, velocity, startTime, duration) {
         console.log("playMidiNote: velocity null.");
         velocity = maxMidiVelocity;
     }
+    // console.log({
+    //     now: performance.now(),
+    //     startTime: startTime,
+    //     delta: startTime - performance.now()
+    // });
 //    console.log("playMidiNote: " + pitch.toString() + " velocity: " + velocity.toString() + " startTime: " + startTime.toString() + " duration: " + duration.toString());
     output.send([0x90, pitch, velocity], startTime);
     let endTime = startTime + duration;
     output.send([0x80, pitch, 0], endTime);
     scheduledNotes.push({ pitch, endTime });
+}
+
+function stopAllScheduledNotes() {
+    let now = performance.now();
+    output.cancel();
+    // output.send([0xB0, 123, 0], performance.now());
+    for (let note of scheduledNotes) {
+        output.send([0x80, note.pitch, 0], now);
+    }
+    scheduledNotes = [];
 }
 
 // Continuator
@@ -463,6 +627,7 @@ class PrefixTreeContinuator {
     }
 
     train(noteSequence) {
+        console.log("Train");
         computeDelta(noteSequence);
         this.internalTrainWithoutKeyTranspose(noteSequence);
         if (keyTranspositionSemiTones > 0) {
@@ -572,14 +737,20 @@ class PrefixTreeContinuator {
     }
 
     generateContinuationNoteSequence(noteSequence) {
-        for (let note of noteSequence) {
+        if ((this.rootDictionary.size === 0) || (this.continuationDictionary.size === 0)) {
+            return [];
         }
         const lengthNoteSequence = noteSequence.length;
         let lastInputNote = noteSequence[noteSequence.length - 1];
+        // console.log('generateContinuationNoteSequence: lastInputNote: ' + lastInputNote.toString());
+        // console.log('generateContinuationNoteSequence: lastInputNote instanceof Note: ' + (lastInputNote instanceof Note));
+        // console.log('generateContinuationNoteSequence: lastInputNote.pitch: ' + lastInputNote.pitch.toString());
         let continuationNoteSequence = [];
         let matchingChild = null;
         for (let i = 1; i < maxContinuationLength; i++) {
             let ii = i;
+            // console.log('generateContinuationNoteSequence: this.rootDictionary: ' + this.rootDictionary.values.toString());
+            // if (!(this.rootDictionary.has(lastInputNote.pitch))) {
             if (!(this.rootDictionary.has(lastInputNote.pitch))) {
                 if (generalDefaultRandomGenerationMode) {
                     const randomIndex = Math.floor(Math.random() * this.continuationDictionary.size) + 1;
@@ -589,9 +760,19 @@ class PrefixTreeContinuator {
 //                  Math.random() e [0, 1[
 //                  Math.floor(Math.random() * this.continuationDictionary.size) e [0, N[
 //                  Math.floor(Math.random() * this.continuationDictionary.size) + 1 e [1, N]
+//                     console.log("generateContinuationNoteSequence - 0: this.continuationDictionary: " + this.continuationDictionary.toString());
+//                     console.log("generateContinuationNoteSequence - 0: this.continuationDictionary.size: " + this.continuationDictionary.size.toString());
+//                     this.continuationDictionary.forEach(function(value, key, innerMap) {
+//                         console.log("generateContinuationNoteSequence - 0: key: " + key.toString() + " value: " + value.toString());
+//                     });
                     const nextNote = this.continuationDictionary.get(randomIndex);
+                    // console.log("generateContinuationNoteSequence - 0: nextNote = undefined: " + (nextNote === undefined));
                     noteSequence.push(nextNote);
                     continuationNoteSequence.push(nextNote);
+                    // for (let note of continuationNoteSequence) {
+                    //     console.log("generateContinuationNoteSequence - 0: note = undefined: " + (note === undefined));
+                    //     console.log("generateContinuationNoteSequence - 0: note: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
+                    // }
                     lastInputNote = nextNote;
                 } else if (i === 1 && firstContinuationDefaultRandomGenerationMode) {
                     const randomIndex = Math.floor(Math.random() * this.continuationDictionary.size) + 1;
@@ -610,6 +791,10 @@ class PrefixTreeContinuator {
                     }
                     noteSequence.push(nextNote);
                     continuationNoteSequence.push(nextNote);
+                    // for (let note of continuationNoteSequence) {
+                    //     console.log("generateContinuationNoteSequence - I: note = undefined: " + (note === undefined));
+                    //     console.log("generateContinuationNoteSequence - I: note: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
+                    // }
                     lastInputNote = nextNote;
                 } else {
                     console.log("Generation failed.");
@@ -655,6 +840,10 @@ class PrefixTreeContinuator {
                     }
                     noteSequence.push(nextNote);
                     continuationNoteSequence.push(nextNote);
+                    // for (let note of continuationNoteSequence) {
+                    //     console.log("generateContinuationNoteSequence - II: note = undefined: " + (note === undefined));
+                    //     console.log("generateContinuationNoteSequence - II: note: pitch: " + note.pitch.toString() + " delta: ", note.delta.toString() + " duration: ", note.duration.toString());
+                    // }
                     lastInputNote = nextNote;
                 }
             }
