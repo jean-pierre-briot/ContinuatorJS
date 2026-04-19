@@ -191,6 +191,7 @@
 // and in https://github.com/jean-pierre-briot/ContinuatorJS
 
 // MIDI System Parameters
+
 let input = null;
 let output = null;
 let inputList = null;
@@ -198,7 +199,6 @@ let inputNameList = null;
 let outputList = null;
 let outputNameList = null;
 let recordedEvents = [];
-let activeNotes = new Map();
 let silenceTimer = null;
 // Continuator Parameters
 // Constants and System Parameters
@@ -220,7 +220,9 @@ let currentState = State.IDLE;
 let generationTimer = null;
 let scheduledTimeouts = [];
 let activeGeneratedNotes = new Set();
-let scheduledNotes = [];
+let activeNotes = new Map();
+let activeNotes2 = new Set();
+let scheduledEvents = [];
 let continuatorDisabled = false;
 // Continuator Configuration/Control Parameters
 let playerSilenceContinuatorStartThreshold = 1000;
@@ -289,6 +291,7 @@ document.getElementById("setup").onclick = async () => {
     fillMidiIOMenus(inputNameList, outputNameList);
     console.log("Inputs: " + inputNameList + " and Outputs: " + outputNameList);
     continuator = new PrefixTreeContinuator();
+    console.log("Continuator created");
 //    if (!input || !output) {
 //        alert("No MIDI input or output found.");
 //        return;
@@ -298,6 +301,10 @@ document.getElementById("setup").onclick = async () => {
 };
 
 document.getElementById("start").onclick = async () => {
+    if (!output) {
+        alert("Select MIDI output first");
+        return;
+    }
     continuatorDisabled = true;
     currentState = State.LISTENING;
     input.onmidimessage = onMIDIMessage;
@@ -348,9 +355,10 @@ function onMIDIMessage(event) {
     const command = status & 0xf0;
     const channel = status & 0x0f;
     if (currentState === State.STOPPED) return;
+    stopAllActiveNotes();
     // output.clear();
-    // clearAllScheduledNotes();
-    // stopAllScheduledNotes();
+    // clearAllActiveNotes();
+    // stopAllActiveNotes();
     // Force note-off pour toutes les notes encore actives
     // activeGeneratedNotes.forEach(pitch => {
     //     output.send([0x80, pitch, 0]);
@@ -392,7 +400,7 @@ function onMIDIMessage(event) {
 function resetSilenceTimer() {
     if (silenceTimer) clearTimeout(silenceTimer);
     silenceTimer = setTimeout(() => {
-        if (recordedEvents.length > 0 && activeNotes.size === 0) {
+        if (recordedEvents.length > 0 && activeNotes.size === 0) {      // activeNotes2 ??
 //            document.getElementById("status").innerText = "Active";
             generateSequence();
             recordedEvents = [];
@@ -404,8 +412,8 @@ function resetSilenceTimer() {
 function stopContinuator() {
     console.log("Manual stop requested.");
     continuatorDisabled = true;
-    stopAllScheduledNotes();
-    // clearAllScheduledNotes();
+    stopAllActiveNotes();
+    // clearAllActiveNotes();
     // // Annule tous les timeouts
     // scheduledTimeouts.forEach(t => clearTimeout(t));
     // scheduledTimeouts = [];
@@ -421,13 +429,13 @@ function stopContinuator() {
     currentState = State.STOPPED;
     document.getElementById("status").innerText = "Stopped";
 }
-
-function clearAllScheduledNotes() {
-    for (let id of scheduledNotes) {
-        clearTimeout(id);
-    }
-    scheduledNotes = [];
-}
+//
+// function clearAllSActiveNotes() {
+//     for (let id of activeNotes) {
+//         clearTimeout(id);
+//     }
+//     activeNotes.clear();
+// }
 
 function resetContinuator() {
     continuator = new PrefixTreeContinuator();
@@ -495,21 +503,51 @@ function playMidiNote(output, pitch, velocity, startTime, duration) {
     //     delta: startTime - performance.now()
     // });
 //    console.log("playMidiNote: " + pitch.toString() + " velocity: " + velocity.toString() + " startTime: " + startTime.toString() + " duration: " + duration.toString());
-    output.send([0x90, pitch, velocity], startTime);
+    // output.send([0x90, pitch, velocity], startTime);
+    const startId = setTimeout(() => {
+        output.send([0x90, pitch, velocity], startTime);
+        activeNotes2.add(pitch);
+    }, startTime - performance.now());
     let endTime = startTime + duration;
-    output.send([0x80, pitch, 0], endTime);
-    scheduledNotes.push({ pitch, endTime });
+    // output.send([0x80, pitch, 0], endTime);
+    const stopId = setTimeout(() => {
+        output.send([0x80, pitch, 0]);
+        activeNotes2.delete(pitch);
+    }, startTime - performance.now() + duration);
+    // activeNotes.push({ pitch, endTime });
+    scheduledEvents.push({ startId, stopId, pitch });
 }
 
-function stopAllScheduledNotes() {
-    let now = performance.now();
-    output.cancel();
-    // output.send([0xB0, 123, 0], performance.now());
-    for (let note of scheduledNotes) {
-        output.send([0x80, note.pitch, 0], now);
+function stopAllActiveNotes() {
+    // 1. cancel futur
+    for (const event of scheduledEvents) {
+        clearTimeout(event.startId);
+        clearTimeout(event.stopId);
     }
-    scheduledNotes = [];
+    scheduledEvents = [];
+    // 2. kill notes déjà jouées
+    for (const pitch of activeNotes2) {
+        output.send([0x80, pitch, 0]);
+    }
+    activeNotes2.clear();
+    // 3. MIDI panic message (important)
+    output.send([0xB0, 123, 0]); // All Notes Off
 }
+
+<!--    let now = performance.now();-->
+<!--    output.cancel();-->
+<!--    output.clear();-->
+<!--    output.sendChannelMode("allnotesoff");-->
+<!--    // output.send([0xB0, 123, 0], performance.now());-->
+<!--    for (let note of scheduledNotes) {-->
+<!--        output.send([0x80, note.pitch, 0], now);-->
+<!--    }-->
+<!--    // for (let id of scheduledNotes) {&ndash;&gt;-->
+<!--    //      clearTimeout(id);&ndash;&gt;-->
+<!--    // }-->
+<!--    scheduledEvents = [];-->
+<!--    activeNotes.clear();-->
+<!--}-->
 
 // Continuator
 
