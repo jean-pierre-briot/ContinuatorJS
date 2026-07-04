@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+
+<html lang="fr">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1.0">
+
+    <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+
+    <style>
+
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        #status {
+            margin-top: 15px;
+            margin-bottom: 25px;
+            font-weight: bold;
+        }
+
+        .grid {
+
+            display: grid;
+
+            grid-template-columns:
+        repeat(3, 1fr);
+
+            gap: 20px;
+        }
+
+        .chart {
+            height: 300px;
+        }
+
+        #chroma3d {
+
+            height: 700px;
+
+            margin-top: 40px;
+        }
+
+    </style>
+
+</head>
+
+<body>
+
+<h1>Continuator Metrics</h1>
+
+<button id="selectFolderButton">
+    Choose folder
+</button>
+
+<div id="status"></div>
+
+<h2>Player</h2>
+
+<div id="playerGrid" class="grid">
+
+    <div id="player_length"></div>
+    <div id="player_pitchRange"></div>
+    <div id="player_durationRange"></div>
+
+    <div id="player_velocityRange"></div>
+    <div id="player_pitchEntropy"></div>
+    <div id="player_pitchIntervalEntropy"></div>
+
+    <div id="player_chromaEntropy"></div>
+    <div id="player_pitchComplexity"></div>
+    <div id="player_pitchComplexityCompressionRatio"></div>
+    <div id="player_chromaComplexity"></div>
+
+    <div id="player_chromaDistanceJS"></div>
+    <div id="player_chromaSimilarityCosine"></div>
+
+</div>
+
+<div id="player_chroma3d"></div>
+
+<hr>
+
+<h2>Continuator</h2>
+
+<div id="continuatorGrid" class="grid">
+
+    <div id="continuator_length"></div>
+    <div id="continuator_pitchRange"></div>
+    <div id="continuator_durationRange"></div>
+    <div id="continuator_velocityRange"></div>
+    <div id="continuator_pitchEntropy"></div>
+    <div id="continuator_pitchIntervalEntropy"></div>
+    <div id="continuator_chromaEntropy"></div>
+    <div id="continuator_pitchComplexity"></div>
+    <div id="continuator_pitchComplexityCompressionRatio"></div>
+    <div id="continuator_chromaComplexity"></div>
+
+    <div id="continuator_chromaDistanceJS"></div>
+    <div id="continuator_chromaSimilarityCosine"></div>
+
+</div>
+
+<div id="continuator_chroma3d"></div>
+
+<hr>
+
+<h2>Interaction</h2>
+
+<div class="grid">
+
+    <div id="interaction_responseSimilarity"></div>
+    <div id="interaction_responseDistance"></div>
+    <div id="interaction_imitationSimilarity"></div>
+    <div id="interaction_imitationDistance"></div>
+    <div id="interaction_adaptationBalance"></div>
+
+</div>
+
+</body>
+
+<script type="module">
+
+    import { Midi }
+        from "https://cdn.jsdelivr.net/npm/@tonejs/midi/+esm";
+
+    /* =====================================================
+       GLOBAL DATA
+       ===================================================== */
+
+    const corpusPlayer = new Map();
+    const corpusContinuator = new Map();
+
+    /* =====================================================
+       MIDI -> NOTE SEQUENCE
+       ===================================================== */
+
+    function midiToNoteSequence(
+        arrayBuffer
+    )
+    {
+        const midi =
+            new Midi(arrayBuffer);
+
+        const noteSequence = [];
+
+        for (
+            const track
+            of midi.tracks
+            )
+        {
+            for (
+                const note
+                of track.notes
+                )
+            {
+                noteSequence.push({
+
+                    pitch:
+                    note.midi,
+
+                    velocity:
+                        Math.round(
+                            note.velocity * 127
+                        ),
+
+                    startTime:
+                    note.time,
+
+                    duration:
+                    note.duration,
+
+                    delta:
+                        0
+                });
+            }
+        }
+
+        noteSequence.sort(
+            (a, b) =>
+                a.startTime -
+                b.startTime
+        );
+
+        for (
+            let i = 1;
+            i < noteSequence.length;
+            i++
+        )
+        {
+            noteSequence[i].delta =
+                noteSequence[i].startTime
+                -
+                noteSequence[i - 1].startTime;
+        }
+
+        return noteSequence;
+    }
+
+    /* =====================================================
+       MUSIC METRICS
+       ===================================================== */
+
+    class MusicMetrics {
+        constructor(prefix) {
+
+            this.prefix = prefix;
+
+            this.fileNames = [];
+
+            this.responsePairs = [];
+
+            this.imitationPairs = [];
+
+            this.provokedIndices = [];
+
+            this.metrics = {
+
+                reactionTimes: [],
+
+                isPrompted: [],
+
+                length: [],
+
+                pitchMin: [],
+                pitchMax: [],
+
+                durationMin: [],
+                durationMax: [],
+
+                velocityMin: [],
+                velocityMax: [],
+
+                pitchEntropy: [],
+
+                chromaEntropy: [],
+
+                pitchIntervalEntropy: [],
+
+                pitchComplexity: [],
+
+                pitchComplexityCompressionRatio: [],
+
+                chromaComplexity: [],
+
+                chromaDistanceJS: [],
+
+                chromaSimilarityCosine: [],
+
+                chroma: []
+            };
+
+            this.metricColors = {
+                player_length: "green",
+                player_pitchRange: "blue",
+                player_durationRange: "olive",
+                player_velocityRange: "yellow",
+                player_pitchEntropy: "red",
+                player_chromaEntropy: "orange",
+                player_pitchIntervalEntropy: "purple",
+                player_pitchComplexity: "black",
+                player_pitchComplexityCompressionRatio: "grey",
+                player_chromaComplexity: "brown",
+                player_chromaDistanceJS: "magenta",
+                player_chromaSimilarityCosine: "cyan",
+                continuator_length: "green",
+                continuator_pitchRange: "blue",
+                continuator_durationRange: "olive",
+                continuator_velocityRange: "yellow",
+                continuator_pitchEntropy: "red",
+                continuator_chromaEntropy: "orange",
+                continuator_pitchIntervalEntropy: "purple",
+                continuator_pitchComplexity: "black",
+                continuator_pitchComplexityCompressionRatio: "grey",
+                continuator_chromaComplexity: "brown",
+                continuator_chromaDistanceJS: "magenta",
+                continuator_chromaSimilarityCosine: "cyan"
+            };
+
+            this.chromaNames = [
+                "C", "C#", "D", "D#",
+                "E", "F", "F#", "G",
+                "G#", "A", "A#", "B"
+            ];
+        }
+
+        plotId(name) {
+            return `${this.prefix}_${name}`;
+        }
+
+        buildResponsePairs(events) {
+
+            let lastContinuator = null;
+
+            for (const event of events) {
+                if (event.type === "continuator") {
+                    lastContinuator = event;
+                }
+
+                if (
+                    event.type === "player"
+                    &&
+                    lastContinuator
+                ) {
+                    this.responsePairs.push({
+                        continuator: lastContinuator,
+                        player: event,
+                        isPrompted:
+                            lastContinuator.isPrompted
+                    })
+                }
+            }
+        }
+
+        buildImitationPairs(events) {
+
+            for (let i = 0; i < events.length; i++) {
+
+                const current = events[i];
+
+                if (current.type !== "player") {
+                    continue;
+                }
+
+                for (
+                    let j = i + 1;
+                    j < events.length;
+                    j++
+                ) {
+                    if (
+                        events[j].type === "continuator"
+                    ) {
+                        this.imitationPairs.push({
+                            player: current,
+                            continuator: events[j]
+                        });
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        async computeCorpusMetrics(corpus) {
+            for (const [filename, item] of corpus) {
+
+                const noteSequence =
+                    item.noteSequence;
+
+                const isPrompted =
+                    item.isPrompted;
+
+                this.metrics.isPrompted.push(
+                    isPrompted
+                );
+
+                this.fileNames.push(
+                    filename
+                );
+
+                const pitchSequence =
+                    noteSequence.map(
+                        n => n.pitch
+                    );
+
+                const durationSequence =
+                    noteSequence.map(
+                        n => n.duration
+                    );
+
+                const velocitySequence =
+                    noteSequence.map(
+                        n => n.velocity
+                    );
+
+                const chromaSequence =
+                    pitchSequence.map(
+                        p => p % 12
+                    );
+
+                const pitchComplexity =
+                    await this
+                        .kolmogorovComplexity(
+                            pitchSequence
+                        );
+
+                const chromaComplexity =
+                    await this
+                        .kolmogorovComplexity(
+                            chromaSequence
+                        );
+
+                const chroma =
+                    this.computeChroma(
+                        pitchSequence,
+                        durationSequence
+                    );
+
+                this.metrics.length.push(
+                    pitchSequence.length
+                );
+
+                this.metrics.pitchMin.push(
+                    pitchSequence.length
+                        ?
+                        Math.min(
+                            ...pitchSequence
+                        )
+                        : 0
+                );
+
+                this.metrics.pitchMax.push(
+                    pitchSequence.length
+                        ?
+                        Math.max(
+                            ...pitchSequence
+                        )
+                        : 0
+                );
+
+                this.metrics.durationMin.push(
+                    durationSequence.length
+                        ?
+                        Math.min(
+                            ...durationSequence
+                        )
+                        : 0
+                );
+
+                this.metrics.durationMax.push(
+                    durationSequence.length
+                        ?
+                        Math.max(
+                            ...durationSequence
+                        )
+                        : 0
+                );
+
+                this.metrics.velocityMin.push(
+                    velocitySequence.length
+                        ?
+                        Math.min(
+                            ...velocitySequence
+                        )
+                        : 0
+                );
+
+                this.metrics.velocityMax.push(
+                    velocitySequence.length
+                        ?
+                        Math.max(
+                            ...velocitySequence
+                        )
+                        : 0
+                );
+
+                this.metrics.pitchEntropy.push(
+                    this.shannonEntropy(
+                        pitchSequence
+                    )
+                );
+
+                this.metrics.chromaEntropy.push(
+                    this.shannonEntropy(
+                        chromaSequence
+                    )
+                );
+
+                this.metrics.pitchIntervalEntropy.push(
+                    this.pitchIntervalEntropy(
+                        pitchSequence
+                    )
+                );
+
+                this.metrics.pitchComplexity.push(
+                    pitchComplexity
+                        .complexity
+                );
+
+                this.metrics.pitchComplexityCompressionRatio
+                    .push(
+                        pitchComplexity
+                            .compressionRatio
+                    );
+
+                this.metrics.chromaComplexity
+                    .push(
+                        chromaComplexity
+                            .complexity
+                    );
+
+                this.metrics.chroma.push(
+                    chroma
+                );
+            }
+        }
+
+        // Shannon Entropy
+
+        shannonEntropy(
+            sequence,
+            base = 2
+        ) {
+            if (!sequence.length) {
+                return 0;
+            }
+
+            const counts =
+                new Map();
+
+            for (const value of sequence) {
+                counts.set(
+                    value,
+                    (counts.get(value) || 0)
+                    + 1
+                );
+            }
+
+            let entropy = 0;
+
+            for (
+                const count
+                of counts.values()
+                ) {
+                const p =
+                    count /
+                    sequence.length;
+
+                entropy -=
+                    p *
+                    (
+                        Math.log(p)
+                        /
+                        Math.log(base)
+                    );
+            }
+
+            return entropy;
+        }
+
+        // Pitch Interval Entropy
+
+        pitchIntervalEntropy(
+            pitchSequence
+        ) {
+            if (
+                pitchSequence.length < 2
+            ) {
+                return 0;
+            }
+
+            const intervals = [];
+
+            for (
+                let i = 1;
+                i < pitchSequence.length;
+                i++
+            ) {
+                intervals.push(
+                    pitchSequence[i]
+                    -
+                    pitchSequence[i - 1]
+                );
+            }
+
+            return this.shannonEntropy(
+                intervals
+            );
+        }
+
+        // Chroma
+
+        computeChroma(
+            pitchSequence,
+            durationSequence
+        ) {
+            const chroma = {};
+
+            for (
+                const c
+                of this.chromaNames
+                ) {
+                chroma[c] = 0;
+            }
+
+            for (
+                let i = 0;
+                i < pitchSequence.length;
+                i++
+            ) {
+                const pitch =
+                    pitchSequence[i];
+
+                const chromaName =
+                    this.chromaNames[
+                    pitch % 12
+                        ];
+
+                chroma[chromaName] +=
+                    durationSequence[i];
+            }
+
+            const total =
+                Object.values(chroma)
+                    .reduce(
+                        (a, b) => a + b,
+                        0
+                    );
+
+            if (total > 0) {
+                for (
+                    const key
+                    of Object.keys(chroma)
+                    ) {
+                    chroma[key] /=
+                        total;
+                }
+            }
+
+            return chroma;
+        }
+
+        // Kolgomorov Complexity
+
+        kolmogorovComplexity(sequence) {
+            if (!sequence.length) {
+                return {
+                    complexity: 0,
+                    compressionRatio: 0
+                };
+            }
+
+            const text =
+                JSON.stringify(sequence);
+
+            const bytes =
+                new TextEncoder()
+                    .encode(text);
+
+            const compressed =
+                pako.gzip(bytes);
+
+            return {
+
+                complexity:
+                compressed.length,
+
+                compressionRatio:
+                    compressed.length /
+                    bytes.length
+            };
+        }
+
+        computeInteractionMetrics(
+            playerMetrics,
+            continuatorMetrics
+        ) {
+            const responseSimilarities = [];
+            const responseDistances = [];
+
+            const imitationSimilarities = [];
+            const imitationDistances = [];
+
+            const n = Math.min(
+                playerMetrics.metrics.chroma.length,
+                continuatorMetrics.metrics.chroma.length
+            );
+
+            // Player Response:
+            // Continuator(N-1) vs Player(N)
+
+            for (let i = 1; i < n; i++) {
+                const playerChroma =
+                    playerMetrics.metrics.chroma[i];
+
+                const previousContinuatorChroma =
+                    continuatorMetrics.metrics.chroma[i - 1];
+
+                responseSimilarities.push(
+                    playerMetrics.chromaSimilarityCosine(
+                        previousContinuatorChroma,
+                        playerChroma
+                    )
+                );
+
+                responseDistances.push(
+                    playerMetrics.chromaDistanceJS(
+                        previousContinuatorChroma,
+                        playerChroma
+                    )
+                )
+            }
+
+            // Continuator Imitation:
+            // Player(N) vs Continuator(N)
+
+            for (let i = 0; i < n; i++) {
+                const playerChroma =
+                    playerMetrics.metrics.chroma[i];
+
+                const sameTurnContinuatorChroma =
+                    continuatorMetrics.metrics.chroma[i];
+
+                imitationSimilarities.push(
+                    playerMetrics.chromaSimilarityCosine(
+                        playerChroma,
+                        sameTurnContinuatorChroma
+                    )
+                );
+
+                imitationDistances.push(
+                    playerMetrics.chromaDistanceJS(
+                        playerChroma,
+                        sameTurnContinuatorChroma
+                    )
+                );
+            }
+
+            const adaptationBalance = [];
+
+            for (let i = 0; i < n - 1; i++) {
+                adaptationBalance.push(
+                    (
+                        imitationSimilarities[i + 1]
+                        -
+                        responseSimilarities[i]
+                    )
+
+                    /
+
+                    (
+                        imitationSimilarities[i + 1]
+                        +
+                        responseSimilarities[i]
+                        +
+                        1e-12
+                    )
+                );
+            }
+
+            return {
+
+                responseSimilarities,
+                responseDistances,
+
+                imitationSimilarities,
+                imitationDistances,
+
+                adaptationBalance
+
+            }
+        }
+
+        // Player and Continuator Chromas Distribution Distance
+
+        distributionEntropy(distribution) {
+            let entropy = 0;
+
+            for (const p of distribution) {
+                if (p > 0) {
+                    entropy -= p * Math.log2(p);
+                }
+            }
+
+            return entropy;
+        }
+
+        chromaDistanceJS(chroma1, chroma2) {
+            const p =
+                this.chromaNames.map(
+                    c => chroma1[c]
+                );
+
+            const q =
+                this.chromaNames.map(
+                    c => chroma2[c]
+                );
+
+            const m =
+                p.map(
+                    (v, i) =>
+                        (v + q[i]) / 2
+                );
+
+            return (
+                this.distributionEntropy(m)
+                -
+                (
+                    this.distributionEntropy(p)
+                    +
+                    this.distributionEntropy(q)
+                ) / 2
+            );
+        }
+
+        chromaSimilarityCosine(chroma1, chroma2) {
+            let dot = 0;
+            let norm1 = 0;
+            let norm2 = 0;
+
+            for (const c of this.chromaNames) {
+                dot +=
+                    chroma1[c]
+                    *
+                    chroma2[c];
+
+                norm1 +=
+                    chroma1[c]
+                    *
+                    chroma1[c];
+
+                norm2 +=
+                    chroma2[c]
+                    *
+                    chroma2[c];
+            }
+
+            return (
+                dot
+                /
+                (
+                    Math.sqrt(norm1)
+                    *
+                    Math.sqrt(norm2)
+                )
+            );
+        }
+
+        // Display
+
+        drawBarChart(
+            turnId,
+            y,
+            title
+        ) {
+            const x =
+                Array.from(
+                    {
+                        length: y.length
+                    },
+                    (_, i) => i + 1
+                );
+
+            const shapes =
+                this.buildPromptedShapes(
+                    this.metrics.isPrompted
+                );
+
+            if (this.metrics.isPrompted) {
+                for (
+                    let i = 0;
+                    i < this.metrics.isPrompted.length;
+                    i++
+                ) {
+                    if (this.metrics.isPrompted[i]) {
+                        shapes.push({
+
+                            type: "rect",
+
+                            xref: "x",
+                            yref: "paper",
+
+                            x0: i + 1 - 0.45,
+                            x1: i + 1 + 0.45,
+
+                            y0: 0,
+                            y1: 1,
+
+                            line: {
+                                color: "red",
+                                width: 3
+                            },
+
+                            fillcolor:
+                                "rgba(0,0,0,0)"
+                        });
+                    }
+                }
+            }
+
+            Plotly.newPlot(
+                turnId,
+
+                [{
+                    x,
+                    y,
+
+                    type: "bar",
+
+                    marker: {
+                        color:
+                            this.metricColors[turnId]
+                    }
+                }],
+
+                {
+                    title,
+                    shapes
+                }
+            );
+        }
+
+        drawRangeChart(
+            turnId,
+            minValues,
+            maxValues,
+            title
+        ) {
+            const range =
+                maxValues.map(
+                    (v, i) =>
+                        v - minValues[i]
+                );
+
+            Plotly.newPlot(
+                turnId,
+
+                [{
+                    x:
+                        Array.from(
+                            {
+                                length:
+                                range.length
+                            },
+                            (_, i) => i + 1
+                        ),
+
+                    y: range,
+
+                    base:
+                    minValues,
+
+                    type:
+                        "bar",
+
+                    marker:
+                        {
+                            color: this.metricColors[turnId]
+                        }
+                }],
+
+                {
+                    title
+                }
+            );
+
+        }
+
+        drawPlots() {
+            this.drawBarChart(
+                this.plotId("length"),
+                this.metrics.length,
+                "Number of Notes"
+            );
+
+            this.drawRangeChart(
+                this.plotId("pitchRange"),
+                this.metrics.pitchMin,
+                this.metrics.pitchMax,
+                "Pitch Range"
+            );
+
+            this.drawRangeChart(
+                this.plotId("durationRange"),
+                this.metrics.durationMin,
+                this.metrics.durationMax,
+                "Duration Range"
+            );
+
+            this.drawRangeChart(
+                this.plotId("velocityRange"),
+                this.metrics.velocityMin,
+                this.metrics.velocityMax,
+                "Velocity Range"
+            );
+
+            this.drawBarChart(
+                this.plotId("pitchEntropy"),
+                this.metrics.pitchEntropy,
+                "Pitch Entropy"
+            );
+
+            this.drawBarChart(
+                this.plotId("chromaEntropy"),
+                this.metrics.chromaEntropy,
+                "Chroma Entropy"
+            );
+
+            this.drawBarChart(
+                this.plotId("pitchIntervalEntropy"),
+                this.metrics.pitchIntervalEntropy,
+                "Pitch Interval Entropy"
+            );
+
+            this.drawBarChart(
+                this.plotId("pitchComplexity"),
+                this.metrics.pitchComplexity,
+                "Pitch Complexity"
+            );
+
+            this.drawBarChart(
+                this.plotId("pitchComplexityCompressionRatio"),
+                this.metrics.pitchComplexityCompressionRatio,
+                "Pitch Complexity Compression Ratio"
+            );
+
+            this.drawBarChart(
+                this.plotId("chromaComplexity"),
+                this.metrics.chromaComplexity,
+                "Chroma Complexity"
+            );
+
+            this.drawChroma3D();
+        }
+
+        drawChroma3D() {
+            const zData =
+                this.metrics.chroma.map(
+                    c =>
+                        Object.values(c)
+                );
+
+            Plotly.newPlot(
+                this.plotId("chroma3d"),
+
+                [{
+                    z: zData,
+
+                    x:
+                    this.chromaNames,
+
+                    y:
+                        Array.from(
+                            {
+                                length:
+                                zData.length
+                            },
+                            (_, i) => i + 1
+                        ),
+
+                    type:
+                        "heatmap",
+
+                }],
+
+                {
+                    title:
+                        "Chroma Distribution",
+                    xaxis: {
+                        title: "Chroma"
+                    },
+                    yaxis: {
+                        title: "Sequence"
+                    },
+                    margin: {
+                        t: 50
+                    }
+                }
+            );
+        }
+
+        drawInteractionPlots(
+            interaction,
+            promptedFlags
+        ) {
+
+            const shapes =
+                this.buildPromptedShapes(
+                    promptedFlags
+                );
+
+            Plotly.newPlot(
+                "interaction_responseSimilarity",
+                [{
+                    y: interaction.responseSimilarities,
+
+                    type: "bar",
+
+                    marker: {
+                        color: "darkgreen"
+                    }
+                }],
+                {
+                    title:
+                        "Continuator(N-1) vs Player(N) Chroma Similarity (Cosine)",
+                    shapes
+                }
+            );
+
+            Plotly.newPlot(
+                "interaction_responseDistance",
+                [{
+                    y: interaction.responseDistances,
+
+                    type: "bar",
+
+                    marker: {
+                        color: "darkred"
+                    }
+                }],
+                {
+                    title:
+                        "Continuator(N-1) vs Player(N) Chroma Distance (JS)",
+                    shapes
+                }
+            );
+
+            Plotly.newPlot(
+                "interaction_imitationSimilarity",
+
+                [{
+                    y: interaction.imitationSimilarities,
+
+                    type: "bar",
+
+                    marker: {
+                        color: "navy"
+                    }
+                }],
+
+                {
+                    title:
+                        "Player(N) vs Continuator(N) Chroma Similarity (Cosine)",
+                    shapes
+                }
+            );
+
+            Plotly.newPlot(
+                "interaction_imitationDistance",
+
+                [{
+                    y: interaction.imitationDistances,
+
+                    type: "bar",
+
+                    marker: {
+                        color: "crimson"
+                    }
+                }],
+
+                {
+                    title:
+                        "Player(N) vs Continuator(N) Chroma Distance (JS)",
+                    shapes
+                }
+            );
+
+            Plotly.newPlot(
+                "interaction_adaptationBalance",
+
+                [{
+                    y: interaction.adaptationBalance,
+
+                    mode: "lines+markers",
+
+                    type: "scatter"
+                }],
+
+                {
+                    title:
+                        "Adaptation Balance: <0 : PLayer follows Continuator",
+                    shapes,
+                    yaxis: {
+                        zeroline: true,
+                        zerolinewidth: 2
+                    }
+                }
+            )
+        }
+
+        buildPromptedShapes(
+            promptedFlags
+        ) {
+            const shapes = [];
+
+            for (
+                let i = 0;
+                i < promptedFlags.length;
+                i++
+            ) {
+                if (!promptedFlags[i])
+                    continue;
+
+                shapes.push({
+
+                    type: "rect",
+
+                    xref: "x",
+                    yref: "paper",
+
+                    x0: i + 1 - 0.45,
+                    x1: i + 1 + 0.45,
+
+                    y0: 0,
+                    y1: 1,
+
+                    line: {
+                        color: "red",
+                        width: 3
+                    },
+
+                    fillcolor:
+                        "rgba(0,0,0,0)"
+                });
+            }
+
+            return shapes;
+        }
+
+    }
+
+    /* =====================================================
+       FILE LOADING
+       ===================================================== */
+
+    async function loadCorpus(directoryHandle) {
+        corpusPlayer.clear();
+        corpusContinuator.clear();
+
+        const playerFiles = [];
+        const continuatorFiles = [];
+        const sessionEvents = [];
+
+        for await (
+            const [name, handle]
+            of directoryHandle.entries()
+            ) {
+            if (
+                handle.kind === "file"
+                &&
+                name.endsWith(".mid")
+            ) {
+                if (name.includes("input")) {
+                    playerFiles.push({
+                        name,
+                        handle
+                    });
+                }
+
+                if (name.includes("generated")) {
+                    continuatorFiles.push({
+                        name,
+                        handle
+                    });
+                }
+            }
+        }
+
+        playerFiles.sort(
+            (a, b) =>
+                a.name.localeCompare(b.name)
+        );
+
+        continuatorFiles.sort(
+            (a, b) =>
+                a.name.localeCompare(b.name)
+        );
+
+        const statusDiv =
+            document.getElementById("status");
+
+        //
+        // PLAYER
+        //
+
+        for (
+            let i = 0;
+            i < playerFiles.length;
+            i++
+        ) {
+            const midiFile =
+                playerFiles[i];
+
+            statusDiv.innerHTML =
+                `Player ${i + 1}/${playerFiles.length}`;
+
+            const file =
+                await midiFile.handle.getFile();
+
+            const buffer =
+                await file.arrayBuffer();
+
+            const noteSequence =
+                midiToNoteSequence(buffer);
+
+            sessionEvents.push({
+
+                id:
+                    parseSequenceId(
+                        midiFile.name
+                    ),
+
+                type:
+                    "player",
+
+                filename:
+                midiFile.name,
+
+                timestamp:
+                    extractTimestamp(
+                        midiFile.name
+                    ),
+
+                noteSequence,
+
+                provoked:
+                    false
+            });
+
+            corpusPlayer.set(
+                midiFile.name,
+                {
+                    noteSequence,
+
+                    timestamp:
+                        extractTimestamp(
+                            midiFile.name
+                        ),
+
+                    isPrompted:
+                        false
+                }
+            );
+        }
+
+        //
+        // CONTINUATOR
+        //
+
+        for (
+            let i = 0;
+            i < continuatorFiles.length;
+            i++
+        ) {
+            const midiFile =
+                continuatorFiles[i];
+
+            statusDiv.innerHTML =
+                `Continuator ${i + 1}/${continuatorFiles.length}`;
+
+            const file =
+                await midiFile.handle.getFile();
+
+            const buffer =
+                await file.arrayBuffer();
+
+            const noteSequence =
+                midiToNoteSequence(buffer);
+
+            sessionEvents.push({
+
+                id:
+                    parseSequenceId(
+                        midiFile.name
+                    ),
+
+                type:
+                    "continuator",
+
+                filename:
+                midiFile.name,
+
+                timestamp:
+                    extractTimestamp(
+                        midiFile.name
+                    ),
+
+                noteSequence,
+
+                provoked:
+                    false
+            });
+
+            corpusContinuator.set(
+                midiFile.name,
+                {
+                    noteSequence,
+
+                    timestamp:
+                        extractTimestamp(
+                            midiFile.name
+                        ),
+
+                    isPrompted:
+                        false
+                }
+            );
+        }
+
+        sessionEvents.sort(
+            (a,b) => a.id - b.id
+        );
+
+        for (
+            let i = 1;
+            i < sessionEvents.length;
+            i++
+        )
+        {
+            const prev =
+                sessionEvents[i - 1];
+
+            const curr =
+                sessionEvents[i];
+
+            if (
+                prev.type === "continuator"
+                &&
+                curr.type === "continuator"
+            )
+            {
+                curr.provoked = true
+            }
+        }
+
+//
+// COPY PROVOKED FLAGS
+//
+
+        for (const event of sessionEvents) {
+            if (event.type !== "continuator")
+                continue;
+
+            const item =
+                corpusContinuator.get(
+                    event.filename
+                );
+
+            if (item) {
+                item.isPrompted =
+                    event.provoked
+            }
+        }
+
+        console.table(
+            sessionEvents.map(
+                e => ({
+                    id: e.id,
+                    type: e.type,
+                    provoked: e.provoked
+                })
+            )
+        );
+
+        statusDiv.innerHTML =
+            "Computing metrics...";
+
+        statusDiv.innerHTML = `${playerFiles.length} Player files/sessions analyzed,
+                                ${continuatorFiles.length} Continuator files/sessions analyzed`
+
+        console.table(
+            sessionEvents.map(
+                e => ({
+                    id: e.id,
+                    type: e.type,
+                    provoked: e.provoked,
+                    timestamp: e.timestamp
+                })
+            )
+        );
+
+        console.table(
+            sessionEvents.map(
+                e => ({
+                    id: e.id,
+                    type: e.type,
+                    provoked: e.provoked,
+                    timestamp: e.timestamp
+                })
+            )
+        );
+
+        const playerMetrics =
+            new MusicMetrics("player");
+
+        const continuatorMetrics =
+            new MusicMetrics("continuator");
+
+        await playerMetrics.computeCorpusMetrics(
+            corpusPlayer
+        );
+
+        await continuatorMetrics.computeCorpusMetrics(
+            corpusContinuator
+        );
+
+        playerMetrics.drawPlots();
+
+        continuatorMetrics.drawPlots();
+
+        const interaction =
+            playerMetrics.computeInteractionMetrics(
+                playerMetrics,
+                continuatorMetrics
+            );
+
+        playerMetrics.buildResponsePairs(sessionEvents);
+        playerMetrics.buildImitationPairs(sessionEvents);
+
+        playerMetrics.drawInteractionPlots(
+            interaction,
+            continuatorMetrics.metrics.isPrompted
+        );
+
+        statusDiv.innerHTML =
+            `${playerFiles.length} player files, `
+            +
+            `${continuatorFiles.length} continuator files analyzed`;
+
+    }
+
+    function parseSequenceId(filename)
+    {
+        const match =
+            filename.match(/^(\d+)_/);
+
+        return match
+            ? parseInt(match[1])
+            : -1;
+    }
+
+    function extractTimestamp(filename)
+    {
+        const match =
+            filename.match(
+                /\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}Z/
+            );
+
+        if (!match)
+        {
+            return null;
+        }
+
+        return new Date(
+            match[0].replace(
+                /T(\d{2})-(\d{2})-(\d{2})Z/,
+                "T$1:$2:$3Z"
+            )
+        );
+    }
+
+    function computeReactionTimes()
+    {
+        const reactionTimes = [];
+
+        let lastContinuator = null;
+
+        for (const event of sessionEvents)
+        {
+            if (
+                event.type === "continuator"
+            )
+            {
+                lastContinuator = event;
+            }
+
+            if (
+                event.type === "player"
+                &&
+                lastContinuator
+            )
+            {
+                reactionTimes.push(
+
+                    (
+                        event.timestamp
+                        -
+                        lastContinuator.timestamp
+                    )
+
+                    / 1000
+                );
+            }
+        }
+
+        return reactionTimes;
+    }
+
+    /* =====================================================
+       UI
+       ===================================================== */
+
+    document
+        .getElementById(
+            "selectFolderButton"
+        )
+        .addEventListener(
+            "click",
+            async () =>
+            {
+                try
+                {
+                    const directoryHandle =
+                        await window.showDirectoryPicker();
+
+                    await loadCorpus(
+                        directoryHandle
+                    );
+                }
+                catch(error)
+                {
+                    console.error(error);
+                }
+            }
+        );
+
+</script>
+
+</body>
+
+</html>
